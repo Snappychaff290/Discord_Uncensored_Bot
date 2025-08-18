@@ -113,10 +113,37 @@ client.on("messageCreate", async (message) => {
 
       const aiResponse = await getAIResponse(userMessage, message.channel.id);
 
+      // Split message if it's too long for Discord (2000 char limit)
       if (aiResponse.length > 2000) {
-        const chunks = aiResponse.match(/.{1,2000}/g);
-        for (const chunk of chunks) {
-          await message.reply(chunk);
+        // Split by sentences/paragraphs first, then by character limit if needed
+        const chunks = [];
+        let currentChunk = "";
+
+        const sentences = aiResponse.split(/(?<=[.!?])\s+/);
+
+        for (const sentence of sentences) {
+          if ((currentChunk + sentence).length > 2000) {
+            if (currentChunk) {
+              chunks.push(currentChunk.trim());
+              currentChunk = sentence;
+            } else {
+              // Single sentence is too long, split by characters
+              chunks.push(sentence.substring(0, 2000));
+              currentChunk = sentence.substring(2000);
+            }
+          } else {
+            currentChunk += (currentChunk ? " " : "") + sentence;
+          }
+        }
+
+        if (currentChunk) {
+          chunks.push(currentChunk.trim());
+        }
+
+        // Send first chunk as reply, rest as follow-up messages
+        await message.reply(chunks[0]);
+        for (let i = 1; i < chunks.length; i++) {
+          await message.channel.send(chunks[i]);
         }
       } else {
         await message.reply(aiResponse);
