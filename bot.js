@@ -13,6 +13,7 @@ const client = new Client({
 const VENICE_AI_API_URL = "https://api.venice.ai/api/v1/chat/completions";
 const VENICE_AI_IMAGE_API_URL = "https://api.venice.ai/api/v1/image/generate";
 const VENICE_AI_API_KEY = process.env.VENICE_API_KEY;
+const VENICE_IMAGE_MODEL = process.env.VENICE_IMAGE_MODEL || "venice-sd35";
 
 // Store conversation history per channel
 const conversationHistory = new Map();
@@ -34,12 +35,14 @@ function addToHistory(channelId, role, content) {
   }
 }
 
+
 async function generateImage(prompt) {
   try {
+    console.log(`🎨 Using model: ${VENICE_IMAGE_MODEL}`);
     const response = await axios.post(
       VENICE_AI_IMAGE_API_URL,
       {
-        model: "fluently-xl",
+        model: VENICE_IMAGE_MODEL,
         prompt: prompt,
         style_preset: "3D Model",
         height: 1024,
@@ -60,13 +63,34 @@ async function generateImage(prompt) {
       }
     );
 
-    return response.data.url || response.data.image_url;
+    // Handle base64 image data from Venice.ai (check both possible locations)
+    let base64Data = null;
+    if (response.data.images && response.data.images.length > 0) {
+      base64Data = response.data.images[0];
+    } else if (response.data.data && response.data.data.length > 0) {
+      base64Data = response.data.data[0];
+    }
+
+    if (base64Data) {
+      console.log(`✅ SUCCESS with model: ${VENICE_IMAGE_MODEL}`);
+      // Return the raw base64 data, we'll handle conversion in the message handler
+      return { type: 'base64', data: base64Data };
+    }
+
+    // Fallback: Try other possible response formats
+    const imageUrl = response.data.url || response.data.image_url || response.data.result?.url;
+    if (imageUrl) {
+      console.log(`✅ SUCCESS with model: ${VENICE_IMAGE_MODEL}`);
+      return { type: 'url', data: imageUrl };
+    }
+
+    throw new Error("No image data found in response");
   } catch (error) {
     console.error(
-      "Error calling Venice AI Image API:",
+      `❌ Image generation failed with model ${VENICE_IMAGE_MODEL}:`,
       error.response?.data || error.message
     );
-    throw new Error("Failed to generate image");
+    throw new Error(`Failed to generate image: ${error.response?.data?.error || error.message}`);
   }
 }
 
@@ -150,16 +174,30 @@ client.on("messageCreate", async (message) => {
       message.channel.sendTyping();
       await message.reply("🎨 Generating your image, please wait...");
 
-      const imageUrl = await generateImage(prompt);
+      const imageResult = await generateImage(prompt);
 
-      if (imageUrl) {
+      if (imageResult) {
+        let attachment;
+        let filename = "generated-image";
+        
+        if (imageResult.type === 'base64') {
+          // Convert base64 to Buffer for Discord
+          const buffer = Buffer.from(imageResult.data, 'base64');
+          attachment = buffer;
+          filename = "generated-image.webp";
+        } else if (imageResult.type === 'url') {
+          // Use URL directly
+          attachment = imageResult.data;
+          filename = "generated-image.png";
+        }
+
         await message.channel.send({
           content: `✨ Here's your generated image for: "${prompt}"`,
-          files: [{ attachment: imageUrl, name: "generated-image.png" }],
+          files: [{ attachment: attachment, name: filename }],
         });
       } else {
         await message.channel.send(
-          "❌ Sorry, I couldn't generate an image. The API didn't return a valid image URL."
+          "❌ Sorry, I couldn't generate an image. The API didn't return a valid image."
         );
       }
     } catch (error) {
