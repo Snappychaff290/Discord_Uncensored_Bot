@@ -11,6 +11,7 @@ const client = new Client({
 });
 
 const VENICE_AI_API_URL = "https://api.venice.ai/api/v1/chat/completions";
+const VENICE_AI_IMAGE_API_URL = "https://api.venice.ai/api/v1/image/generate";
 const VENICE_AI_API_KEY = process.env.VENICE_API_KEY;
 
 // Store conversation history per channel
@@ -30,6 +31,42 @@ function addToHistory(channelId, role, content) {
   // Keep only last 20 messages (10 exchanges) to manage context length
   if (history.length > 20) {
     history.splice(0, history.length - 20);
+  }
+}
+
+async function generateImage(prompt) {
+  try {
+    const response = await axios.post(
+      VENICE_AI_IMAGE_API_URL,
+      {
+        model: "fluently-xl",
+        prompt: prompt,
+        style_preset: "3D Model",
+        height: 1024,
+        width: 1024,
+        steps: 30,
+        cfg_scale: 7.5,
+        seed: Math.floor(Math.random() * 1000000000),
+        lora_strength: 50,
+        safe_mode: false,
+        return_binary: false,
+        hide_watermark: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${VENICE_AI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return response.data.url || response.data.image_url;
+  } catch (error) {
+    console.error(
+      "Error calling Venice AI Image API:",
+      error.response?.data || error.message
+    );
+    throw new Error("Failed to generate image");
   }
 }
 
@@ -97,6 +134,42 @@ client.once("ready", () => {
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
+
+  // Handle |imagine command
+  if (message.content.startsWith("|imagine ")) {
+    const prompt = message.content.slice(9).trim(); // Remove "|imagine " prefix
+
+    if (!prompt) {
+      await message.reply(
+        "Please provide a prompt for image generation. Usage: `|imagine [your prompt]`"
+      );
+      return;
+    }
+
+    try {
+      message.channel.sendTyping();
+      await message.reply("🎨 Generating your image, please wait...");
+
+      const imageUrl = await generateImage(prompt);
+
+      if (imageUrl) {
+        await message.channel.send({
+          content: `✨ Here's your generated image for: "${prompt}"`,
+          files: [{ attachment: imageUrl, name: "generated-image.png" }],
+        });
+      } else {
+        await message.channel.send(
+          "❌ Sorry, I couldn't generate an image. The API didn't return a valid image URL."
+        );
+      }
+    } catch (error) {
+      console.error("Error generating image:", error);
+      await message.channel.send(
+        "❌ Sorry, I encountered an error while generating your image. Please try again later."
+      );
+    }
+    return;
+  }
 
   if (message.mentions.has(client.user)) {
     const userMessage = message.content.replace(/<@!?\d+>/g, "").trim();
