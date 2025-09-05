@@ -7,6 +7,10 @@ const VENICE_AI_IMAGE_API_URL = "https://api.venice.ai/api/v1/image/generate";
 const VENICE_AI_API_KEY = process.env.VENICE_API_KEY;
 const VENICE_IMAGE_MODEL = process.env.VENICE_IMAGE_MODEL || "venice-sd35";
 
+// Uncensored LM API configuration for bot2
+const UNCENSORED_API_URL = "https://mkstqjtsujvcaobdksxs.functions.supabase.co/functions/v1/uncensoredlm-api";
+const UNCENSORED_API_KEY = process.env.UNCENSORED_API_KEY;
+
 // Store conversation history per bot per channel
 const conversationHistories = {
   bot1: new Map(),
@@ -282,59 +286,92 @@ async function getAIResponse(
       },
     ];
 
-    const response = await axios.post(
-      VENICE_AI_API_URL,
-      {
-        model: "venice-uncensored",
-        messages: messages,
-        venice_parameters: {
-          enable_web_search: "on",
-          enable_web_citations: true,
-          include_venice_system_prompt: false,
+    let response;
+    let aiResponse;
+
+    if (botId === "bot1") {
+      // Use Venice AI for bot1
+      response = await axios.post(
+        VENICE_AI_API_URL,
+        {
+          model: "venice-uncensored",
+          messages: messages,
+          venice_parameters: {
+            enable_web_search: "on",
+            enable_web_citations: true,
+            include_venice_system_prompt: false,
+          },
+          frequency_penalty: 0,
+          presence_penalty: 0,
+          max_tokens: 1000,
+          temperature: 0.7,
+          top_p: 0.9,
+          stream: false,
         },
-        frequency_penalty: 0,
-        presence_penalty: 0,
-        max_tokens: 1000,
-        temperature: 0.7,
-        top_p: 0.9,
-        stream: false,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${VENICE_AI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    // Advanced debugging - log full API response
-    console.log("🔍 CHAT API FULL RESPONSE DEBUG:");
-    console.log("Status:", response.status);
-    console.log("Headers:", JSON.stringify(response.headers, null, 2));
-    console.log("Full Response Data:", JSON.stringify(response.data, null, 2));
-
-    let aiResponse = response.data.choices[0].message.content;
-
-    // Debug citation processing
-    console.log("🔍 CITATION DEBUG:");
-    console.log("Original response:", aiResponse);
-    console.log("Venice parameters:", response.data.venice_parameters);
-
-    // Process citations if available
-    const citations = response.data.venice_parameters?.web_search_citations;
-    console.log("Citations found:", citations ? citations.length : 0);
-
-    if (citations && citations.length > 0) {
-      console.log("Processing citations...");
-      const processedResponse = processCitations(aiResponse, citations);
-      console.log("Processed response length:", processedResponse.length);
-      console.log(
-        "Processed response preview:",
-        processedResponse.substring(0, 500) + "..."
+        {
+          headers: {
+            Authorization: `Bearer ${VENICE_AI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
       );
-      aiResponse = processedResponse;
+
+      // Advanced debugging - log full API response
+      console.log("🔍 VENICE AI CHAT API FULL RESPONSE DEBUG:");
+      console.log("Status:", response.status);
+      console.log("Headers:", JSON.stringify(response.headers, null, 2));
+      console.log("Full Response Data:", JSON.stringify(response.data, null, 2));
+
+      aiResponse = response.data.choices[0].message.content;
+
+      // Debug citation processing
+      console.log("🔍 CITATION DEBUG:");
+      console.log("Original response:", aiResponse);
+      console.log("Venice parameters:", response.data.venice_parameters);
+
+      // Process citations if available
+      const citations = response.data.venice_parameters?.web_search_citations;
+      console.log("Citations found:", citations ? citations.length : 0);
+
+      if (citations && citations.length > 0) {
+        console.log("Processing citations...");
+        const processedResponse = processCitations(aiResponse, citations);
+        console.log("Processed response length:", processedResponse.length);
+        console.log(
+          "Processed response preview:",
+          processedResponse.substring(0, 500) + "..."
+        );
+        aiResponse = processedResponse;
+      } else {
+        console.log("No citations to process");
+      }
+    } else if (botId === "bot2") {
+      // Use Uncensored LM API for bot2
+      response = await axios.post(
+        UNCENSORED_API_URL,
+        {
+          model: "uncensored-lm",
+          messages: messages,
+          max_tokens: 1000,
+          temperature: 0.7,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${UNCENSORED_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      // Advanced debugging - log full API response
+      console.log("🔍 UNCENSORED LM CHAT API FULL RESPONSE DEBUG:");
+      console.log("Status:", response.status);
+      console.log("Headers:", JSON.stringify(response.headers, null, 2));
+      console.log("Full Response Data:", JSON.stringify(response.data, null, 2));
+
+      aiResponse = response.data.choices[0].message.content;
     } else {
-      console.log("No citations to process");
+      throw new Error(`Unknown botId: ${botId}`);
     }
 
     // Add both user message and AI response to history
@@ -355,7 +392,7 @@ async function getAIResponse(
     );
     console.error("Full Error Object:", error);
     console.error(
-      "Error calling Venice AI API:",
+      `Error calling ${botId === "bot1" ? "Venice AI" : "Uncensored LM"} API:`,
       error.response?.data || error.message
     );
     return "Sorry, I encountered an error while processing your message.";
@@ -499,6 +536,11 @@ if (!process.env.DISCORD_TOKEN_BOT2) {
 
 if (!process.env.VENICE_API_KEY) {
   console.error("VENICE_API_KEY is not set in environment variables");
+  process.exit(1);
+}
+
+if (!process.env.UNCENSORED_API_KEY) {
+  console.error("UNCENSORED_API_KEY is not set in environment variables");
   process.exit(1);
 }
 
